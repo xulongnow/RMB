@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人民币大写转换工具</title>
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --text: #1a1a2e;
+    --text-secondary: #6b7280;
+    --border: #e5e7eb;
+    --primary: #2563eb;
+    --primary-light: #dbeafe;
+    --primary-dark: #1d4ed8;
+    --success: #059669;
+    --success-bg: #d1fae5;
+    --error: #dc2626;
+    --error-bg: #fee2e2;
+    --warning: #d97706;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.05);
+    --shadow-lg: 0 10px 40px rgba(0,0,0,0.1);
+    --transition: 0.2s ease;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 28px; }
+  header h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+  header p { color: var(--text-secondary); font-size: 0.95rem; }
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 16px;
+    transition: box-shadow var(--transition);
+  }
+  .card:hover { box-shadow: var(--shadow-lg); }
+  .card-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title .icon {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85rem; font-weight: 700;
+  }
+  .input-group { margin-bottom: 16px; }
+  .input-group label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .input-wrap { position: relative; }
+  input[type="text"], textarea {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 1rem;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    color: var(--text);
+    transition: border-color var(--transition), box-shadow var(--transition);
+    font-family: inherit;
+  }
+  input[type="text"]:focus, textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-light);
+  }
+  input[type="text"].error { border-color: var(--error); }
+  textarea { min-height: 80px; resize: vertical; line-height: 1.7; }
+  .hint {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+  .hint.error { color: var(--error); }
+  .result-box {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1.5px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 16px;
+    margin-top: 12px;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    word-break: break-all;
+  }
+  .result-box .result-text {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--primary-dark);
+    flex: 1;
+  }
+  .result-box .result-text.empty { color: var(--text-secondary); font-weight: 400; }
+  .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 18px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--primary);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-secondary {
+    background: var(--bg);
+    color: var(--text);
+    border: 1.5px solid var(--border);
+  }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-success {
+    background: var(--success);
+    color: #fff;
+  }
+  .btn-success:hover { background: #047857; }
+  .btn-sm { padding: 6px 12px; font-size: 0.8rem; }
+  .switch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 44px; height: 24px;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #d1d5db;
+    border-radius: 24px;
+    transition: var(--transition);
+  }
+  .slider:before {
+    content: "";
+    position: absolute;
+    height: 18px; width: 18px;
+    left: 3px; bottom: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: var(--transition);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .switch input:checked + .slider { background: var(--primary); }
+  .switch input:checked + .slider:before { transform: translateX(20px); }
+  .switch-label { font-size: 0.9rem; font-weight: 500; }
+  .history-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+  }
+  .history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+    gap: 8px;
+  }
+  .history-item:last-child { border-bottom: none; }
+  .history-item .history-num { font-weight: 500; color: var(--primary); }
+  .history-item .history-cn { color: var(--text-secondary); flex: 1; word-break: break-all; }
+  .history-empty { padding: 20px; text-align: center; color: var(--text-secondary); font-size: 0.9rem; }
+  .cheat-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .cheat-cell {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 10px 4px;
+    text-align: center;
+    font-size: 0.9rem;
+  }
+  .cheat-cell .cn { font-weight: 600; color: var(--primary); font-size: 1.1rem; }
+  .cheat-cell .ar { font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px; }
+  .rules-list {
+    list-style: none;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+  .rules-list li {
+    padding: 6px 0;
+    padding-left: 18px;
+    position: relative;
+  }
+  .rules-list li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 13px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
+  }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--text);
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    opacity: 0;
+    transition: all 0.3s ease;
+    z-index: 1000;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .info-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-left: 6px;
+  }
+  .limit-info {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+  .section-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 16px 0;
+  }
+  @media (max-width: 480px) {
+    body { padding: 16px 12px; }
+    header h1 { font-size: 1.4rem; }
+    .card { padding: 18px 16px; }
+    .cheat-grid { grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .cheat-cell { padding: 8px 2px; font-size: 0.8rem; }
+    .cheat-cell .cn { font-size: 1rem; }
+    .result-box { flex-direction: column; align-items: flex-start; }
+    .result-box .result-text { font-size: 1rem; }
+    .btn-group { width: 100%; }
+    .btn-group .btn { flex: 1; }
+  }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .card { box-shadow: none; border: 1px solid #ddd; }
+    .btn, .switch-row, .history-list, .cheat-grid, .rules-list, footer { display: none !important; }
+    .result-box { border: 2px solid #000; background: #fff !important; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>人民币大写转换工具</h1>
+    <p>财务报销、票据填写的得力助手</p>
+  </header>
+
+  <!-- 小写转大写 -->
+  <div class="card">
+    <div class="card-title">
+      <div class="icon">1</div>
+      小写金额转大写
+      <span class="info-badge">实时转换</span>
+    </div>
+    <div class="input-group">
+      <label for="numInput">输入小写金额（阿拉伯数字）</label>
+      <div class="input-wrap">
+        <input type="text" id="numInput" placeholder="例如：100、1409.50、0.01" autocomplete="off" maxlength="17" inputmode="decimal" aria-label="小写金额输入">
+      </div>
+      <div class="hint" id="numHint">支持整数、小数，自动去除多余空格</div>
+      <div class="limit-info">金额上限：千亿位（999,999,999,999.99）</div>
+    </div>
+    <div class="result-box" role="status" aria-live="polite" aria-atomic="true">
+      <div class="result-text empty" id="numResult">输入金额后将自动显示大写结果</div>
+      <div class="btn-group">
+        <button class="btn btn-sm btn-success" id="numCopy" style="visibility:hidden;opacity:0">复制</button>
+        <button class="btn btn-sm btn-secondary" id="numClear">清空</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 大写转小写 -->
+  <div class="card">
+    <div class="card-title">
+      <div class="icon">2</div>
+      大写金额转小写
+      <span class="info-badge">点击转换</span>
+    </div>
+    <div class="input-group">
+      <label for="cnInput">输入大写金额（中文大写）</label>
+      <textarea id="cnInput" placeholder="例如：壹仟肆佰零玖元伍角、壹分" maxlength="100" aria-label="大写金额输入"></textarea>
+    </div>
+    <div class="btn-group" style="margin-bottom:12px">
+      <button class="btn btn-primary" id="cnConvert">转换</button>
+      <button class="btn btn-secondary" id="cnClear">清空</button>
+    </div>
+    <div class="result-box" role="status" aria-live="polite" aria-atomic="true">
+      <div class="result-text empty" id="cnResult">转换结果将显示在这里</div>
+      <div class="btn-group">
+        <button class="btn btn-sm btn-success" id="cnCopy" style="visibility:hidden;opacity:0">复制</button>
+      </div>
+    </div>
+    <div class="hint" id="cnHint" style="margin-top:8px"></div>
+  </div>
+
+  <!-- 设置 -->
+  <div class="card">
+    <div class="card-title">
+      <div class="icon" style="background:#fef3c7;color:#d97706">S</div>
+      转换设置
+    </div>
+    <div class="switch-row">
+      <label class="switch">
+        <input type="checkbox" id="prefixToggle" aria-label="结果前缀加人民币">
+        <span class="slider"></span>
+      </label>
+      <span class="switch-label">结果前缀加「人民币」</span>
+    </div>
+  </div>
+
+  <!-- 转换历史 -->
+  <div class="card">
+    <div class="card-title" style="justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="icon" style="background:#fce7f3;color:#be185d">H</div>
+        转换历史
+      </div>
+      <button class="btn btn-sm btn-secondary" id="historyClear">清空历史</button>
+    </div>
+    <div class="history-list" id="historyList">
+      <div class="history-empty">暂无转换记录</div>
+    </div>
+  </div>
+
+  <!-- 大写规范速查 -->
+  <div class="card">
+    <div class="card-title">
+      <div class="icon" style="background:#e0e7ff;color:#4338ca">R</div>
+      大写规范速查
+    </div>
+    <div class="cheat-grid">
+      <div class="cheat-cell"><div class="cn">零</div><div class="ar">0</div></div>
+      <div class="cheat-cell"><div class="cn">壹</div><div class="ar">1</div></div>
+      <div class="cheat-cell"><div class="cn">贰</div><div class="ar">2</div></div>
+      <div class="cheat-cell"><div class="cn">叁</div><div class="ar">3</div></div>
+      <div class="cheat-cell"><div class="cn">肆</div><div class="ar">4</div></div>
+      <div class="cheat-cell"><div class="cn">伍</div><div class="ar">5</div></div>
+      <div class="cheat-cell"><div class="cn">陆</div><div class="ar">6</div></div>
+      <div class="cheat-cell"><div class="cn">柒</div><div class="ar">7</div></div>
+      <div class="cheat-cell"><div class="cn">捌</div><div class="ar">8</div></div>
+      <div class="cheat-cell"><div class="cn">玖</div><div class="ar">9</div></div>
+    </div>
+    <div class="cheat-grid" style="grid-template-columns:repeat(5,1fr)">
+      <div class="cheat-cell"><div class="cn">拾</div><div class="ar">十</div></div>
+      <div class="cheat-cell"><div class="cn">佰</div><div class="ar">百</div></div>
+      <div class="cheat-cell"><div class="cn">仟</div><div class="ar">千</div></div>
+      <div class="cheat-cell"><div class="cn">万</div><div class="ar">万</div></div>
+      <div class="cheat-cell"><div class="cn">亿</div><div class="ar">亿</div></div>
+    </div>
+    <div class="section-divider"></div>
+    <ul class="rules-list">
+      <li>到「元」为止写「整」（或「正」）；有分的不写整</li>
+      <li>中间有 0 写「零」：1409.50 &rarr; 壹仟肆佰零玖元伍角</li>
+      <li>连续多个 0 只写一个零：6007.14 &rarr; 陆仟零柒元壹角肆分</li>
+      <li>角位是 0 而分位不是 0 时，元后写「零」：325.04 &rarr; 叁佰贰拾伍元零肆分</li>
+      <li>负数不支持转换；0 转换为零元整</li>
+      <li>输入仅支持数字和小数点，其他字符会被过滤并提示</li>
+    </ul>
+  </div>
+
+  <footer style="text-align:center;padding:16px 0 8px;color:var(--text-secondary);font-size:0.8rem">
+    纯前端工具，不收集任何数据，断网可用
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ========== 核心转换算法 ==========
+
+  const DIGITS = '零壹贰叁肆伍陆柒捌玖';
+  const UNITS = ['仟','佰','拾',''];
+  const BIG_UNITS = ['','万','亿','万亿','亿亿'];
+  const DIGIT_MAP = {零:0,壹:1,贰:2,叁:3,肆:4,伍:5,陆:6,柒:7,捌:8,玖:9};
+  const UNIT_MAP = {拾:10,佰:100,仟:1000,万:10000,亿:100000000};
+  const ALLOWED_CN_CHARS = new Set([
+    ...Object.keys(DIGIT_MAP), ...Object.keys(UNIT_MAP),
+    '元','角','分','整','正','人民币','负'
+  ]);
+  // 将全角数字映射为半角
+  const FULLWIDTH_MAP = {'０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','，':','};
+
+  // 小写 → 大写
+  function toChinese(numStr) {
+    numStr = numStr.trim();
+    if (!numStr) return '';
+
+    // 必须包含至少一个数字
+    if (!/\d/.test(numStr)) return '';
+
+    // 处理前导零
+    let neg = false;
+    if (numStr[0] === '-') { neg = true; numStr = numStr.slice(1); }
+    numStr = numStr.replace(/^0+/, '') || '0';
+
+    // 去除前导零后若以小数点开头，补0
+    if (numStr[0] === '.') numStr = '0' + numStr;
+
+    let [integer, decimal = ''] = numStr.split('.');
+    decimal = (decimal + '00').slice(0, 2);
+
+    // 段数保护：超过支持的 BIG_UNITS 长度则返回超限提示
+    let segCount = Math.ceil(integer.length / 4);
+    if (segCount > BIG_UNITS.length) {
+      return '金额过大，暂不支持';
+    }
+
+    // 整数部分
+    let intResult = integer === '0' ? '' : integerToChinese(integer);
+
+    // 小数部分
+    let decResult = decimalToChinese(decimal, intResult !== '');
+
+    if (intResult === '') {
+      if (decimal === '00') return '零元整';
+      return decResult;
+    }
+
+    let result = intResult + '元' + decResult;
+    if (decimal === '00') {
+      result += '整';
+    }
+    return (neg ? '负' : '') + result;
+  }
+
+  function integerToChinese(n) {
+    if (n === '0') return '零';
+    if (!n || n === '') return '';
+
+    // 分段（从右往左每4位）
+    let segments = [];
+    let str = n;
+    while (str.length > 0) {
+      segments.unshift(str.slice(-4));
+      str = str.slice(0, -4);
+    }
+
+    let result = '';
+    let zeroBetween = false;
+
+    for (let i = 0; i < segments.length; i++) {
+      let seg = segments[i];
+      let segNum = parseInt(seg);
+
+      if (segNum === 0) {
+        zeroBetween = true;
+        continue;
+      }
+
+      if (zeroBetween) {
+        result += '零';
+        zeroBetween = false;
+      }
+
+      let segResult = processSegment(seg);
+      let bigUnit = BIG_UNITS[segments.length - 1 - i];
+      if (bigUnit === undefined) {
+        // 越界保护：理论上已被 toChinese 入口拦截，此处兜底
+        return '';
+      }
+      result += segResult + bigUnit;
+    }
+
+    return result;
+  }
+
+  function processSegment(seg) {
+    let L = seg.length;
+    let result = '';
+    let zeroFlag = false;
+
+    for (let j = 0; j < L; j++) {
+      let d = parseInt(seg[j]);
+      let unitIdx = 4 - L + j; // 单位索引：仟=0, 佰=1, 拾=2, 个=3
+
+      if (d === 0) {
+        if (!zeroFlag && j < L - 1) {
+          let hasNonZero = false;
+          for (let k = j + 1; k < L; k++) {
+            if (parseInt(seg[k]) !== 0) { hasNonZero = true; break; }
+          }
+          if (hasNonZero) {
+            result += '零';
+            zeroFlag = true;
+          }
+        }
+      } else {
+        result += DIGITS[d] + UNITS[unitIdx];
+        zeroFlag = false;
+      }
+    }
+
+    return result;
+  }
+
+  function decimalToChinese(decimal, hasYuan) {
+    let jiao = parseInt(decimal[0]);
+    let fen = parseInt(decimal[1]);
+
+    if (jiao === 0 && fen === 0) return '';
+
+    let result = '';
+    if (jiao > 0) {
+      result += DIGITS[jiao] + '角';
+    }
+    if (fen > 0) {
+      if (jiao === 0 && hasYuan) {
+        result += '零';
+      }
+      result += DIGITS[fen] + '分';
+    }
+    return result;
+  }
+
+  // 大写 → 小写
+  function toNumber(chinese) {
+    chinese = chinese.trim();
+    if (!chinese) return '';
+
+    // 输入合法性校验：所有字符必须在允许集合中
+    let cleanForCheck = chinese.replace(/^人民币/, '').replace(/[整正]$/, '');
+    if (cleanForCheck[0] === '负') cleanForCheck = cleanForCheck.slice(1);
+    for (let char of cleanForCheck) {
+      if (!ALLOWED_CN_CHARS.has(char)) {
+        return { error: true, msg: '包含无法识别的字符：「' + char + '」' };
+      }
+    }
+
+    // 去除人民币前缀
+    chinese = chinese.replace(/^人民币/, '');
+    // 去除整/正
+    chinese = chinese.replace(/[整正]$/, '');
+    // 去除负号处理
+    let neg = false;
+    if (chinese[0] === '负') { neg = true; chinese = chinese.slice(1); }
+
+    // 去除前后缀后若为空
+    if (!chinese) {
+      return { error: true, msg: '请输入有效的大写金额' };
+    }
+
+    // 纯单位字符检查：至少需要一个数字字符
+    let hasDigit = false;
+    for (let char of chinese) {
+      if (DIGIT_MAP[char] !== undefined) { hasDigit = true; break; }
+    }
+    if (!hasDigit) {
+      return { error: true, msg: '请输入有效的大写金额' };
+    }
+
+    // 路由：根据单位决定整数部分与小数部分
+    let yuanIndex = chinese.indexOf('元');
+    let integerPart = '', decimalPart = '';
+
+    if (yuanIndex >= 0) {
+      integerPart = chinese.slice(0, yuanIndex);
+      decimalPart = chinese.slice(yuanIndex + 1);
+    } else if (/[角分]/.test(chinese)) {
+      // 无元但有角/分：纯小数
+      decimalPart = chinese;
+    } else if (/[万亿]/.test(chinese)) {
+      // 无元无角分但有万亿：纯整数（如壹佰万亿）
+      integerPart = chinese;
+    } else {
+      return { error: true, msg: '大写金额格式错误，缺少「元」「角」或「分」单位' };
+    }
+
+    // 角分顺序校验：分不能在角之前
+    if (decimalPart) {
+      let jiaoIdx = decimalPart.indexOf('角');
+      let fenIdx = decimalPart.indexOf('分');
+      if (fenIdx >= 0 && jiaoIdx >= 0 && fenIdx < jiaoIdx) {
+        return { error: true, msg: '「分」不能在「角」之前' };
+      }
+    }
+
+    let integer = integerPart ? chineseToNumber(integerPart) : 0;
+    let decimal = 0;
+    if (decimalPart) {
+      let decResult = parseDecimal(decimalPart);
+      if (decResult && typeof decResult === 'object' && decResult.error) return decResult;
+      decimal = decResult;
+    }
+
+    let total = integer + decimal;
+
+    // 根据原始输入是否包含「分」决定小数位
+    let hasFen = chinese.includes('分');
+    let hasJiao = chinese.includes('角');
+
+    if (total === Math.floor(total)) {
+      return (neg ? '-' : '') + String(Math.floor(total));
+    }
+    if (!hasFen && hasJiao) {
+      // 只有角没有分：保留1位小数
+      return (neg ? '-' : '') + total.toFixed(1);
+    }
+    return (neg ? '-' : '') + total.toFixed(2);
+  }
+
+  function chineseToNumber(chinese) {
+    let total = 0;
+    let current = 0;
+    let lastDigit = 0;
+
+    for (let char of chinese) {
+      if (DIGIT_MAP[char] !== undefined) {
+        lastDigit = DIGIT_MAP[char];
+        current += lastDigit;
+      } else if (UNIT_MAP[char] !== undefined) {
+        let unit = UNIT_MAP[char];
+        if (unit >= 10000) {
+          // 修复：大单位链式处理，支持万亿级组合
+          total = (total + current) * unit;
+          current = 0;
+          lastDigit = 0;
+        } else {
+          current = current - lastDigit + lastDigit * unit;
+        }
+      }
+    }
+    return total + current;
+  }
+
+  function parseDecimal(decimalChinese) {
+    let jiao = 0, fen = 0;
+    let lastDigit = 0;
+    let hasJiao = false, hasFen = false;
+
+    for (let char of decimalChinese) {
+      if (DIGIT_MAP[char] !== undefined) {
+        lastDigit = DIGIT_MAP[char];
+      } else if (char === '角') {
+        if (hasJiao) return { error: true, msg: '「角」重复出现' };
+        jiao = lastDigit;
+        lastDigit = 0;
+        hasJiao = true;
+      } else if (char === '分') {
+        if (hasFen) return { error: true, msg: '「分」重复出现' };
+        if (hasJiao === false && lastDigit !== 0) {
+          // 没有角直接有分的情况：lastDigit 应算作分
+          // 但这样不对，因为 "壹分" 中 lastDigit=1 后直接遇到分
+          // 实际上这是正确的
+        }
+        fen = lastDigit;
+        lastDigit = 0;
+        hasFen = true;
+      }
+    }
+
+    return (jiao * 10 + fen) / 100;
+  }
+
+  // ========== 输入校验 ==========
+
+  function normalizeInput(val) {
+    // 全角转半角
+    let result = '';
+    for (let char of val) {
+      result += FULLWIDTH_MAP[char] || char;
+    }
+    // 去除千分位逗号
+    result = result.replace(/,/g, '');
+    return result;
+  }
+
+  function validateNumberInput(val) {
+    val = val.trim().replace(/\s/g, '');
+    if (!val) return { valid: true, msg: '' };
+
+    // 先归一化
+    val = normalizeInput(val);
+
+    // 只允许数字和小数点
+    if (!/^-?\d+\.?\d*$/.test(val)) {
+      return { valid: false, msg: '只能输入数字和小数点' };
+    }
+
+    let parts = val.replace(/^-/, '').split('.');
+    if (parts.length > 2) {
+      return { valid: false, msg: '小数点只能有一个' };
+    }
+
+    if (parts[0].length > 12) {
+      return { valid: false, msg: '金额超过千亿位上限' };
+    }
+
+    if (parts[1] && parts[1].length > 2) {
+      return { valid: false, msg: '小数最多两位（分）' };
+    }
+
+    if (val[0] === '-') {
+      return { valid: false, msg: '暂不支持负数转换' };
+    }
+
+    return { valid: true, msg: '' };
+  }
+
+  // ========== 历史记录 ==========
+
+  const HISTORY_KEY = 'rmb_history_v2';
+  const MAX_HISTORY = 10;
+  const PREFIX_KEY = 'rmb_prefix_v1';
+
+  function loadHistory() {
+    try {
+      let raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      let parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(h => {
+        return h && typeof h === 'object' &&
+          typeof h.num === 'string' && typeof h.cn === 'string' &&
+          h.num.length < 100 && h.cn.length < 200;
+      }).slice(0, MAX_HISTORY);
+    } catch (e) { return []; }
+  }
+
+  function saveHistory(history) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY))); } catch (e) {}
+  }
+
+  function addToHistory(num, cn, isReverse) {
+    if (!num || !cn) return;
+    let history = loadHistory();
+    // 去重：如果最新一条相同则不添加
+    if (history.length > 0 && history[0].num === num && history[0].cn === cn) return;
+    history.unshift({ num, cn, time: Date.now(), reverse: !!isReverse });
+    if (history.length > MAX_HISTORY) history.pop();
+    saveHistory(history);
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const list = document.getElementById('historyList');
+    const history = loadHistory();
+
+    if (history.length === 0) {
+      list.innerHTML = '<div class="history-empty">暂无转换记录</div>';
+      return;
+    }
+
+    list.innerHTML = history.map(h => {
+      let badge = h.reverse ? '<span class="info-badge" style="margin-left:4px">反</span>' : '';
+      return `<div class="history-item">
+        <span class="history-num">${escapeHtml(h.num)}${badge}</span>
+        <span class="history-cn">${escapeHtml(h.cn)}</span>
+        <button class="btn btn-sm btn-secondary" onclick="restoreHistory('${escapeJs(h.num)}', ${h.reverse ? 'true' : 'false'})" aria-label="还原记录">还原</button>
+      </div>`;
+    }).join('');
+  }
+
+  window.restoreHistory = function(num, isReverse) {
+    if (isReverse) {
+      document.getElementById('cnInput').value = num;
+      document.getElementById('cnInput').focus();
+      document.getElementById('cnConvert').click();
+    } else {
+      document.getElementById('numInput').value = num;
+      document.getElementById('numInput').dispatchEvent(new Event('input'));
+      document.getElementById('numInput').focus();
+    }
+  };
+
+  // ========== UI 交互 ==========
+
+  function showToast(msg) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+  }
+
+  function escapeJs(str) {
+    return String(str).replace(/[\\'"\n\r]/g, m => ({'\\':'\\\\','\'':'\\\'','"':'\\"','\n':'\\n','\r':'\\r'}[m]));
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('已复制到剪贴板');
+    } catch (e) {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('已复制到剪贴板');
+    }
+  }
+
+  // ========== 事件绑定 ==========
+
+  const numInput = document.getElementById('numInput');
+  const numResult = document.getElementById('numResult');
+  const numHint = document.getElementById('numHint');
+  const numCopy = document.getElementById('numCopy');
+  const numClear = document.getElementById('numClear');
+  const cnInput = document.getElementById('cnInput');
+  const cnResult = document.getElementById('cnResult');
+  const cnHint = document.getElementById('cnHint');
+  const cnCopy = document.getElementById('cnCopy');
+  const cnConvert = document.getElementById('cnConvert');
+  const cnClear = document.getElementById('cnClear');
+  const prefixToggle = document.getElementById('prefixToggle');
+  const historyClear = document.getElementById('historyClear');
+
+  // 恢复前缀开关状态
+  try {
+    prefixToggle.checked = localStorage.getItem(PREFIX_KEY) === 'true';
+  } catch (e) {}
+
+  function setCopyVisible(btn, visible) {
+    btn.style.visibility = visible ? 'visible' : 'hidden';
+    btn.style.opacity = visible ? '1' : '0';
+  }
+
+  function updateNumResult() {
+    const rawVal = numInput.value;
+    const val = normalizeInput(rawVal);
+    const validation = validateNumberInput(val);
+
+    if (!val.trim()) {
+      numInput.classList.remove('error');
+      numHint.textContent = '支持整数、小数，自动去除多余空格';
+      numHint.classList.remove('error');
+      numResult.textContent = '输入金额后将自动显示大写结果';
+      numResult.classList.add('empty');
+      setCopyVisible(numCopy, false);
+      return;
+    }
+
+    if (!validation.valid) {
+      numInput.classList.add('error');
+      numHint.textContent = validation.msg;
+      numHint.classList.add('error');
+      numResult.textContent = '—';
+      numResult.classList.add('empty');
+      setCopyVisible(numCopy, false);
+      return;
+    }
+
+    numInput.classList.remove('error');
+    numHint.textContent = '支持整数、小数，自动去除多余空格';
+    numHint.classList.remove('error');
+
+    let result = toChinese(val.trim().replace(/\s/g, ''));
+    if (!result) {
+      numResult.textContent = '—';
+      numResult.classList.add('empty');
+      setCopyVisible(numCopy, false);
+      return;
+    }
+    if (prefixToggle.checked) {
+      result = '人民币' + result;
+    }
+
+    numResult.textContent = result || '—';
+    numResult.classList.remove('empty');
+    setCopyVisible(numCopy, true);
+
+    // 添加到历史（去抖动后）
+    clearTimeout(window._historyTimer);
+    window._historyTimer = setTimeout(() => {
+      const cleanVal = val.trim().replace(/\s/g, '');
+      if (cleanVal && result && result !== '—') {
+        addToHistory(cleanVal, result, false);
+      }
+    }, 800);
+  }
+
+  // debounce 实时转换，减少输入长金额时的视觉闪烁
+  let numDebounceTimer = null;
+  numInput.addEventListener('input', () => {
+    clearTimeout(numDebounceTimer);
+    numDebounceTimer = setTimeout(updateNumResult, 150);
+  });
+
+  numCopy.addEventListener('click', () => {
+    const text = numResult.textContent;
+    if (text && text !== '—') copyText(text);
+  });
+
+  numClear.addEventListener('click', () => {
+    numInput.value = '';
+    updateNumResult();
+    numInput.focus();
+  });
+
+  cnConvert.addEventListener('click', () => {
+    const val = cnInput.value.trim();
+    if (!val) {
+      cnResult.textContent = '转换结果将显示在这里';
+      cnResult.classList.add('empty');
+      setCopyVisible(cnCopy, false);
+      cnHint.textContent = '';
+      return;
+    }
+
+    let result = toNumber(val);
+    if (result && typeof result === 'object' && result.error) {
+      cnResult.textContent = '无法识别';
+      cnResult.classList.add('empty');
+      setCopyVisible(cnCopy, false);
+      cnHint.textContent = result.msg;
+      cnHint.classList.add('error');
+      return;
+    }
+
+    if (result === '') {
+      cnResult.textContent = '无法识别，请检查大写格式';
+      cnResult.classList.add('empty');
+      setCopyVisible(cnCopy, false);
+      cnHint.textContent = '提示：确保使用规范大写汉字（零壹贰叁肆伍陆柒捌玖拾佰仟万亿）';
+      cnHint.classList.remove('error');
+      return;
+    }
+
+    cnResult.textContent = result;
+    cnResult.classList.remove('empty');
+    setCopyVisible(cnCopy, true);
+    cnHint.textContent = '';
+    cnHint.classList.remove('error');
+
+    // 添加到历史
+    addToHistory(val, result, true);
+  });
+
+  // Enter 快捷键触发大写转小写
+  cnInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      cnConvert.click();
+    }
+  });
+
+  cnCopy.addEventListener('click', () => {
+    const text = cnResult.textContent;
+    if (text && !cnResult.classList.contains('empty')) copyText(text);
+  });
+
+  cnClear.addEventListener('click', () => {
+    cnInput.value = '';
+    cnResult.textContent = '转换结果将显示在这里';
+    cnResult.classList.add('empty');
+    setCopyVisible(cnCopy, false);
+    cnHint.textContent = '';
+    cnInput.focus();
+  });
+
+  prefixToggle.addEventListener('change', () => {
+    updateNumResult();
+    try { localStorage.setItem(PREFIX_KEY, String(prefixToggle.checked)); } catch (e) {}
+  });
+
+  historyClear.addEventListener('click', () => {
+    if (confirm('确定清空所有历史记录吗？')) {
+      saveHistory([]);
+      renderHistory();
+      showToast('历史记录已清空');
+    }
+  });
+
+  // 键盘快捷键
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+Enter 触发小写转大写（当数字输入框聚焦时）
+    if (e.key === 'Enter' && e.ctrlKey && document.activeElement === numInput) {
+      e.preventDefault();
+      // 数字框是实时转换，Enter 只是复制结果
+      if (!numResult.classList.contains('empty')) {
+        numCopy.click();
+      }
+    }
+  });
+
+  // 初始化
+  renderHistory();
+
+})();
+</script>
+</body>
+</html>
