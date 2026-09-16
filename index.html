@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
 <title>人民币大写转换工具</title>
 <style>
   :root {
@@ -298,7 +299,6 @@
     <h1>人民币大写转换工具</h1>
     <p>财务报销、票据填写的得力助手</p>
   </header>
-
   <!-- 小写转大写 -->
   <div class="card">
     <div class="card-title">
@@ -312,7 +312,7 @@
         <input type="text" id="numInput" placeholder="例如：100、1409.50、0.01" autocomplete="off" maxlength="17" inputmode="decimal" aria-label="小写金额输入">
       </div>
       <div class="hint" id="numHint">支持整数、小数，自动去除多余空格</div>
-      <div class="limit-info">金额上限：千亿位（999,999,999,999.99）</div>
+      <div class="limit-info">金额上限：玖仟玖佰玖拾玖万亿（15位整数）</div>
     </div>
     <div class="result-box" role="status" aria-live="polite" aria-atomic="true">
       <div class="result-text empty" id="numResult">输入金额后将自动显示大写结果</div>
@@ -322,7 +322,6 @@
       </div>
     </div>
   </div>
-
   <!-- 大写转小写 -->
   <div class="card">
     <div class="card-title">
@@ -346,7 +345,6 @@
     </div>
     <div class="hint" id="cnHint" style="margin-top:8px"></div>
   </div>
-
   <!-- 设置 -->
   <div class="card">
     <div class="card-title">
@@ -361,7 +359,6 @@
       <span class="switch-label">结果前缀加「人民币」</span>
     </div>
   </div>
-
   <!-- 转换历史 -->
   <div class="card">
     <div class="card-title" style="justify-content:space-between">
@@ -375,7 +372,6 @@
       <div class="history-empty">暂无转换记录</div>
     </div>
   </div>
-
   <!-- 大写规范速查 -->
   <div class="card">
     <div class="card-title">
@@ -407,24 +403,20 @@
       <li>中间有 0 写「零」：1409.50 &rarr; 壹仟肆佰零玖元伍角</li>
       <li>连续多个 0 只写一个零：6007.14 &rarr; 陆仟零柒元壹角肆分</li>
       <li>角位是 0 而分位不是 0 时，元后写「零」：325.04 &rarr; 叁佰贰拾伍元零肆分</li>
-      <li>负数不支持转换；0 转换为零元整</li>
+      <li>负数转换示例：-0.01 &rarr; 负壹分</li>
       <li>输入仅支持数字和小数点，其他字符会被过滤并提示</li>
     </ul>
   </div>
-
   <footer style="text-align:center;padding:16px 0 8px;color:var(--text-secondary);font-size:0.8rem">
     纯前端工具，不收集任何数据，断网可用
   </footer>
 </div>
-
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-
 <script>
 (function() {
   'use strict';
 
-  // ========== 核心转换算法 ==========
-
+  // ========== 常量定义 ==========
   const DIGITS = '零壹贰叁肆伍陆柒捌玖';
   const UNITS = ['仟','佰','拾',''];
   const BIG_UNITS = ['','万','亿','万亿','亿亿'];
@@ -434,45 +426,74 @@
     ...Object.keys(DIGIT_MAP), ...Object.keys(UNIT_MAP),
     '元','角','分','整','正','人民币','负'
   ]);
-  // 将全角数字映射为半角
+  // 全角数字映射为半角
   const FULLWIDTH_MAP = {'０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','，':','};
+  // JS Number 安全整数上限 2^53-1 ≈ 9×10^15，最大安全位数为15位
+  const MAX_SAFE_DIGITS = 15;
+  // 历史记录相关常量
+  const HISTORY_KEY = 'rmb_history_v2';
+  const MAX_HISTORY = 10;
+  const PREFIX_KEY = 'rmb_prefix_v1';
+  const INPUT_STATE_KEY = 'rmb_input_state_v1';
+  // UI 交互常量
+  const DEBOUNCE_MS = 150;
+  const HISTORY_TIMER_MS = 800;
+  const TOAST_DURATION_MS = 2000;
+  const MAX_INPUT_LEN = 17;
+  const MAX_CN_INPUT_LEN = 100;
 
-  // 小写 → 大写
+  // ========== 核心转换算法：小写 → 大写 ==========
+
+  /**
+   * 将阿拉伯数字字符串转换为中文大写金额
+   * @param {string} numStr - 输入数字字符串
+   * @returns {string} 中文大写金额，无效输入返回空字符串
+   */
   function toChinese(numStr) {
     numStr = numStr.trim();
     if (!numStr) return '';
-
     // 必须包含至少一个数字
     if (!/\d/.test(numStr)) return '';
-
-    // 处理前导零
+    // P0-2: 先检查整数部分是否超出安全精度范围
+    let tempStr = numStr;
+    if (tempStr[0] === '-') tempStr = tempStr.slice(1);
+    tempStr = tempStr.replace(/^0+/, '') || '0';
+    if (tempStr[0] === '.') tempStr = '0' + tempStr;
+    let [integer] = tempStr.split('.');
+    if (integer.length > MAX_SAFE_DIGITS) {
+      return '金额过大，整数部分超出安全精度范围';
+    }
+    // P1-11: 与UI一致的格式校验
+    let validation = validateNumberInput(numStr);
+    if (!validation.valid) {
+      return '';
+    }
+    // 处理负数
     let neg = false;
     if (numStr[0] === '-') { neg = true; numStr = numStr.slice(1); }
     numStr = numStr.replace(/^0+/, '') || '0';
-
     // 去除前导零后若以小数点开头，补0
     if (numStr[0] === '.') numStr = '0' + numStr;
-
-    let [integer, decimal = ''] = numStr.split('.');
+    let [integerPart, decimal = ''] = numStr.split('.');
+    // P1-3: 超长小数位不静默截断
+    if (decimal.length > 2) {
+      return '';
+    }
     decimal = (decimal + '00').slice(0, 2);
-
     // 段数保护：超过支持的 BIG_UNITS 长度则返回超限提示
-    let segCount = Math.ceil(integer.length / 4);
+    let segCount = Math.ceil(integerPart.length / 4);
     if (segCount > BIG_UNITS.length) {
       return '金额过大，暂不支持';
     }
-
-    // 整数部分
-    let intResult = integer === '0' ? '' : integerToChinese(integer);
-
-    // 小数部分
+    // 整数部分转换
+    let intResult = integerPart === '0' ? '' : integerToChinese(integerPart);
+    // 小数部分转换
     let decResult = decimalToChinese(decimal, intResult !== '');
-
     if (intResult === '') {
       if (decimal === '00') return '零元整';
-      return decResult;
+      // P1-4: 负数小数金额保留"负"前缀
+      return (neg ? '负' : '') + decResult;
     }
-
     let result = intResult + '元' + decResult;
     if (decimal === '00') {
       result += '整';
@@ -480,10 +501,15 @@
     return (neg ? '负' : '') + result;
   }
 
+  /**
+   * 将整数部分（不含小数）转换为中文大写
+   * 从右往左每4位分段，逐段处理
+   * @param {string} n - 整数数字字符串
+   * @returns {string} 中文大写整数
+   */
   function integerToChinese(n) {
     if (n === '0') return '零';
     if (!n || n === '') return '';
-
     // 分段（从右往左每4位）
     let segments = [];
     let str = n;
@@ -491,25 +517,23 @@
       segments.unshift(str.slice(-4));
       str = str.slice(0, -4);
     }
-
     let result = '';
     let zeroBetween = false;
-
     for (let i = 0; i < segments.length; i++) {
       let seg = segments[i];
-      let segNum = parseInt(seg);
-
+      let segNum = parseInt(seg, 10);
       if (segNum === 0) {
         zeroBetween = true;
         continue;
       }
-
+      // P1-1: 跨零段时加"零"，并跳过该段的前导零
+      let skipLeadingZero = false;
       if (zeroBetween) {
         result += '零';
         zeroBetween = false;
+        skipLeadingZero = true;
       }
-
-      let segResult = processSegment(seg);
+      let segResult = processSegment(seg, skipLeadingZero);
       let bigUnit = BIG_UNITS[segments.length - 1 - i];
       if (bigUnit === undefined) {
         // 越界保护：理论上已被 toChinese 入口拦截，此处兜底
@@ -517,24 +541,32 @@
       }
       result += segResult + bigUnit;
     }
-
     return result;
   }
 
-  function processSegment(seg) {
+  /**
+   * 处理单个4位段内的大写转换
+   * @param {string} seg - 4位以内数字字符串
+   * @param {boolean} skipLeadingZero - 是否跳过前导零（用于段间已有"零"的情况）
+   * @returns {string} 段内中文大写
+   */
+  function processSegment(seg, skipLeadingZero) {
+    // P1-1: 当段间已有"零"时，去除本段前导零避免"零零"重复
+    if (skipLeadingZero) {
+      seg = seg.replace(/^0+/, '') || '0';
+    }
     let L = seg.length;
     let result = '';
     let zeroFlag = false;
-
     for (let j = 0; j < L; j++) {
-      let d = parseInt(seg[j]);
+      // P2-8: 所有 parseInt 显式指定 radix = 10
+      let d = parseInt(seg[j], 10);
       let unitIdx = 4 - L + j; // 单位索引：仟=0, 佰=1, 拾=2, 个=3
-
       if (d === 0) {
         if (!zeroFlag && j < L - 1) {
           let hasNonZero = false;
           for (let k = j + 1; k < L; k++) {
-            if (parseInt(seg[k]) !== 0) { hasNonZero = true; break; }
+            if (parseInt(seg[k], 10) !== 0) { hasNonZero = true; break; }
           }
           if (hasNonZero) {
             result += '零';
@@ -546,16 +578,19 @@
         zeroFlag = false;
       }
     }
-
     return result;
   }
 
+  /**
+   * 将小数部分（2位）转换为中文大写
+   * @param {string} decimal - 2位小数字符串
+   * @param {boolean} hasYuan - 是否有整数部分（元）
+   * @returns {string} 小数部分中文大写
+   */
   function decimalToChinese(decimal, hasYuan) {
-    let jiao = parseInt(decimal[0]);
-    let fen = parseInt(decimal[1]);
-
+    let jiao = parseInt(decimal[0], 10);
+    let fen = parseInt(decimal[1], 10);
     if (jiao === 0 && fen === 0) return '';
-
     let result = '';
     if (jiao > 0) {
       result += DIGITS[jiao] + '角';
@@ -569,11 +604,16 @@
     return result;
   }
 
-  // 大写 → 小写
+  // ========== 核心转换算法：大写 → 小写 ==========
+
+  /**
+   * 将中文大写金额转换为阿拉伯数字字符串
+   * @param {string} chinese - 中文大写金额
+   * @returns {string|Object} 数字字符串，或包含error/msg的对象
+   */
   function toNumber(chinese) {
     chinese = chinese.trim();
     if (!chinese) return '';
-
     // 输入合法性校验：所有字符必须在允许集合中
     let cleanForCheck = chinese.replace(/^人民币/, '').replace(/[整正]$/, '');
     if (cleanForCheck[0] === '负') cleanForCheck = cleanForCheck.slice(1);
@@ -582,20 +622,21 @@
         return { error: true, msg: '包含无法识别的字符：「' + char + '」' };
       }
     }
-
     // 去除人民币前缀
     chinese = chinese.replace(/^人民币/, '');
-    // 去除整/正
+    // 去除整/正后缀
     chinese = chinese.replace(/[整正]$/, '');
     // 去除负号处理
     let neg = false;
     if (chinese[0] === '负') { neg = true; chinese = chinese.slice(1); }
-
     // 去除前后缀后若为空
     if (!chinese) {
       return { error: true, msg: '请输入有效的大写金额' };
     }
-
+    // P1-8: 支持「拾」作为「壹拾」的简写
+    if (chinese[0] === '拾') {
+      chinese = '壹' + chinese;
+    }
     // 纯单位字符检查：至少需要一个数字字符
     let hasDigit = false;
     for (let char of chinese) {
@@ -604,11 +645,13 @@
     if (!hasDigit) {
       return { error: true, msg: '请输入有效的大写金额' };
     }
-
+    // P1-7: 检查「零拾」等畸形结构
+    if (/零拾/.test(chinese)) {
+      return { error: true, msg: '大写金额格式错误：「零拾」不是规范写法' };
+    }
     // 路由：根据单位决定整数部分与小数部分
     let yuanIndex = chinese.indexOf('元');
     let integerPart = '', decimalPart = '';
-
     if (yuanIndex >= 0) {
       integerPart = chinese.slice(0, yuanIndex);
       decimalPart = chinese.slice(yuanIndex + 1);
@@ -621,7 +664,6 @@
     } else {
       return { error: true, msg: '大写金额格式错误，缺少「元」「角」或「分」单位' };
     }
-
     // 角分顺序校验：分不能在角之前
     if (decimalPart) {
       let jiaoIdx = decimalPart.indexOf('角');
@@ -630,7 +672,6 @@
         return { error: true, msg: '「分」不能在「角」之前' };
       }
     }
-
     let integer = integerPart ? chineseToNumber(integerPart) : 0;
     let decimal = 0;
     if (decimalPart) {
@@ -638,13 +679,10 @@
       if (decResult && typeof decResult === 'object' && decResult.error) return decResult;
       decimal = decResult;
     }
-
     let total = integer + decimal;
-
     // 根据原始输入是否包含「分」决定小数位
     let hasFen = chinese.includes('分');
     let hasJiao = chinese.includes('角');
-
     if (total === Math.floor(total)) {
       return (neg ? '-' : '') + String(Math.floor(total));
     }
@@ -655,11 +693,16 @@
     return (neg ? '-' : '') + total.toFixed(2);
   }
 
+  /**
+   * 将中文大写整数部分（不含元角分）转换为数字
+   * P0-1 修复：正确处理「万」作为独立层级和前置修饰
+   * @param {string} chinese - 中文大写整数
+   * @returns {number} 转换后的数字
+   */
   function chineseToNumber(chinese) {
     let total = 0;
     let current = 0;
     let lastDigit = 0;
-
     for (let char of chinese) {
       if (DIGIT_MAP[char] !== undefined) {
         lastDigit = DIGIT_MAP[char];
@@ -667,11 +710,20 @@
       } else if (UNIT_MAP[char] !== undefined) {
         let unit = UNIT_MAP[char];
         if (unit >= 10000) {
-          // 修复：大单位链式处理，支持万亿级组合
-          total = (total + current) * unit;
+          // 大单位（万、亿）处理：
+          // 1. 若已有 total 且 current 为 0：如「万亿」，total = total * unit
+          // 2. 若已有 total 且 current > 0：如「壹亿零壹万」，total = total + current * unit
+          // 3. 若 total 为 0：如「壹万」，total = current * unit
+          if (total > 0 && current === 0) {
+            total = total * unit;
+          } else if (total > 0) {
+            total = total + current * unit;
+          } else {
+            total = current * unit;
+          }
           current = 0;
-          lastDigit = 0;
         } else {
+          // 小单位（拾、佰、仟）：current = current - lastDigit + lastDigit * unit
           current = current - lastDigit + lastDigit * unit;
         }
       }
@@ -679,86 +731,94 @@
     return total + current;
   }
 
+  /**
+   * 解析大写金额的小数部分（角、分）
+   * @param {string} decimalChinese - 角分部分字符串
+   * @returns {number|Object} 小数数值，或错误对象
+   */
   function parseDecimal(decimalChinese) {
     let jiao = 0, fen = 0;
     let lastDigit = 0;
     let hasJiao = false, hasFen = false;
-
+    let expectDigit = true;
     for (let char of decimalChinese) {
       if (DIGIT_MAP[char] !== undefined) {
         lastDigit = DIGIT_MAP[char];
+        expectDigit = false;
       } else if (char === '角') {
         if (hasJiao) return { error: true, msg: '「角」重复出现' };
+        // P1-10: 角前缺少数字时报错
+        if (expectDigit) return { error: true, msg: '「角」前缺少数字' };
         jiao = lastDigit;
         lastDigit = 0;
         hasJiao = true;
+        expectDigit = true;
       } else if (char === '分') {
         if (hasFen) return { error: true, msg: '「分」重复出现' };
-        if (hasJiao === false && lastDigit !== 0) {
-          // 没有角直接有分的情况：lastDigit 应算作分
-          // 但这样不对，因为 "壹分" 中 lastDigit=1 后直接遇到分
-          // 实际上这是正确的
-        }
+        // P1-10: 分前缺少数字时报错
+        if (expectDigit) return { error: true, msg: '「分」前缺少数字' };
         fen = lastDigit;
         lastDigit = 0;
         hasFen = true;
+        expectDigit = true;
+      } else {
+        // P1-9: 未识别字符报错
+        return { error: true, msg: '小数部分包含无法识别的字符：「' + char + '」' };
       }
     }
-
     return (jiao * 10 + fen) / 100;
   }
 
   // ========== 输入校验 ==========
 
+  /**
+   * 将输入字符串归一化（全角转半角、去除千分位逗号）
+   * @param {string} val - 原始输入
+   * @returns {string} 归一化后的字符串
+   */
   function normalizeInput(val) {
-    // 全角转半角
     let result = '';
     for (let char of val) {
       result += FULLWIDTH_MAP[char] || char;
     }
-    // 去除千分位逗号
     result = result.replace(/,/g, '');
     return result;
   }
 
+  /**
+   * 校验数字输入的格式合法性
+   * @param {string} val - 输入字符串
+   * @returns {Object} {valid: boolean, msg: string}
+   */
   function validateNumberInput(val) {
     val = val.trim().replace(/\s/g, '');
     if (!val) return { valid: true, msg: '' };
-
-    // 先归一化
     val = normalizeInput(val);
-
+    // P1-2: 尾部小数点检测
+    if (/\.$/.test(val)) {
+      return { valid: false, msg: '金额不能以点结尾' };
+    }
     // 只允许数字和小数点
     if (!/^-?\d+\.?\d*$/.test(val)) {
       return { valid: false, msg: '只能输入数字和小数点' };
     }
-
     let parts = val.replace(/^-/, '').split('.');
     if (parts.length > 2) {
       return { valid: false, msg: '小数点只能有一个' };
     }
-
-    if (parts[0].length > 12) {
-      return { valid: false, msg: '金额超过千亿位上限' };
-    }
-
+    // P1-3: 超长小数位检测
     if (parts[1] && parts[1].length > 2) {
       return { valid: false, msg: '小数最多两位（分）' };
     }
-
-    if (val[0] === '-') {
-      return { valid: false, msg: '暂不支持负数转换' };
-    }
-
     return { valid: true, msg: '' };
   }
 
   // ========== 历史记录 ==========
 
-  const HISTORY_KEY = 'rmb_history_v2';
-  const MAX_HISTORY = 10;
-  const PREFIX_KEY = 'rmb_prefix_v1';
-
+  /**
+   * 从 localStorage 加载历史记录
+   * @returns {Array} 历史记录数组
+   */
   function loadHistory() {
     try {
       let raw = localStorage.getItem(HISTORY_KEY);
@@ -773,10 +833,25 @@
     } catch (e) { return []; }
   }
 
+  /**
+   * 保存历史记录到 localStorage
+   * @param {Array} history - 历史记录数组
+   */
   function saveHistory(history) {
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY))); } catch (e) {}
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+    } catch (e) {
+      // P2-7: localStorage quota 错误处理
+      console.warn('保存历史记录失败：', e);
+    }
   }
 
+  /**
+   * 添加一条记录到历史
+   * @param {string} num - 原始输入
+   * @param {string} cn - 转换结果
+   * @param {boolean} isReverse - 是否反向转换（大写转小写）
+   */
   function addToHistory(num, cn, isReverse) {
     if (!num || !cn) return;
     let history = loadHistory();
@@ -788,26 +863,46 @@
     renderHistory();
   }
 
+  /**
+   * 渲染历史记录列表
+   */
   function renderHistory() {
     const list = document.getElementById('historyList');
-    const history = loadHistory();
-
-    if (history.length === 0) {
-      list.innerHTML = '<div class="history-empty">暂无转换记录</div>';
-      return;
+    try {
+      const history = loadHistory();
+      if (history.length === 0) {
+        list.innerHTML = '<div class="history-empty">暂无转换记录</div>';
+        return;
+      }
+      list.innerHTML = history.map(h => {
+        let badge = h.reverse ? '<span class="info-badge" style="margin-left:4px">反</span>' : '';
+        return `<div class="history-item">
+          <span class="history-num">${escapeHtml(h.num)}${badge}</span>
+          <span class="history-cn">${escapeHtml(h.cn)}</span>
+          <button class="btn btn-sm btn-secondary" data-num="${escapeHtml(h.num)}" data-reverse="${h.reverse ? 'true' : 'false'}" aria-label="还原记录">还原</button>
+        </div>`;
+      }).join('');
+      // 为动态生成的按钮绑定事件（避免 inline onclick）
+      list.querySelectorAll('button[data-num]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          let num = this.getAttribute('data-num');
+          let isReverse = this.getAttribute('data-reverse') === 'true';
+          restoreHistory(num, isReverse);
+        });
+      });
+    } catch (e) {
+      // P2-13: renderHistory 异常处理
+      console.error('渲染历史记录失败：', e);
+      list.innerHTML = '<div class="history-empty">历史记录加载失败</div>';
     }
-
-    list.innerHTML = history.map(h => {
-      let badge = h.reverse ? '<span class="info-badge" style="margin-left:4px">反</span>' : '';
-      return `<div class="history-item">
-        <span class="history-num">${escapeHtml(h.num)}${badge}</span>
-        <span class="history-cn">${escapeHtml(h.cn)}</span>
-        <button class="btn btn-sm btn-secondary" onclick="restoreHistory('${escapeJs(h.num)}', ${h.reverse ? 'true' : 'false'})" aria-label="还原记录">还原</button>
-      </div>`;
-    }).join('');
   }
 
-  window.restoreHistory = function(num, isReverse) {
+  /**
+   * 从历史记录还原输入
+   * @param {string} num - 原始输入
+   * @param {boolean} isReverse - 是否反向转换
+   */
+  function restoreHistory(num, isReverse) {
     if (isReverse) {
       document.getElementById('cnInput').value = num;
       document.getElementById('cnInput').focus();
@@ -817,7 +912,52 @@
       document.getElementById('numInput').dispatchEvent(new Event('input'));
       document.getElementById('numInput').focus();
     }
-  };
+  }
+
+  // ========== 输入状态持久化（刷新恢复）==========
+
+  /**
+   * 保存当前输入状态到 sessionStorage
+   */
+  function saveInputState() {
+    try {
+      sessionStorage.setItem(INPUT_STATE_KEY, JSON.stringify({
+        numValue: document.getElementById('numInput').value,
+        cnValue: document.getElementById('cnInput').value,
+        numResult: document.getElementById('numResult').textContent,
+        cnResult: document.getElementById('cnResult').textContent,
+        numEmpty: document.getElementById('numResult').classList.contains('empty'),
+        cnEmpty: document.getElementById('cnResult').classList.contains('empty')
+      }));
+    } catch (e) {}
+  }
+
+  /**
+   * 从 sessionStorage 恢复输入状态
+   */
+  function restoreInputState() {
+    try {
+      let raw = sessionStorage.getItem(INPUT_STATE_KEY);
+      if (!raw) return;
+      let state = JSON.parse(raw);
+      if (state.numValue) {
+        document.getElementById('numInput').value = state.numValue;
+        if (!state.numEmpty) {
+          document.getElementById('numResult').textContent = state.numResult;
+          document.getElementById('numResult').classList.remove('empty');
+          setCopyVisible(document.getElementById('numCopy'), true);
+        }
+      }
+      if (state.cnValue) {
+        document.getElementById('cnInput').value = state.cnValue;
+        if (!state.cnEmpty) {
+          document.getElementById('cnResult').textContent = state.cnResult;
+          document.getElementById('cnResult').classList.remove('empty');
+          setCopyVisible(document.getElementById('cnCopy'), true);
+        }
+      }
+    } catch (e) {}
+  }
 
   // ========== UI 交互 ==========
 
@@ -825,7 +965,7 @@
     const toast = document.getElementById('toast');
     toast.textContent = msg;
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 2000);
+    setTimeout(() => toast.classList.remove('show'), TOAST_DURATION_MS);
   }
 
   function escapeHtml(str) {
@@ -833,7 +973,11 @@
   }
 
   function escapeJs(str) {
-    return String(str).replace(/[\\'"\n\r]/g, m => ({'\\':'\\\\','\'':'\\\'','"':'\\"','\n':'\\n','\r':'\\r'}[m]));
+    // P1-13: 转义反引号；P2-1: 转义 Unicode 行终止符
+    return String(str).replace(/[\\'"`\n\r\u2028\u2029]/g, m => {
+      let map = {'\\':'\\\\','\'':'\\\'','"':'\\"','`':'\\`','\n':'\\n','\r':'\\r','\u2028':'\\u2028','\u2029':'\\u2029'};
+      return map[m] || m;
+    });
   }
 
   async function copyText(text) {
@@ -841,21 +985,34 @@
       await navigator.clipboard.writeText(text);
       showToast('已复制到剪贴板');
     } catch (e) {
-      // fallback
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      showToast('已复制到剪贴板');
+      // P1-12 / P2-2: fallback 改进，检测 execCommand 是否成功
+      let fallbackSuccess = false;
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        fallbackSuccess = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (fallbackErr) {
+        fallbackSuccess = false;
+      }
+      if (fallbackSuccess) {
+        showToast('已复制到剪贴板');
+      } else {
+        showToast('复制失败，请手动复制');
+      }
     }
   }
 
-  // ========== 事件绑定 ==========
+  function setCopyVisible(btn, visible) {
+    btn.style.visibility = visible ? 'visible' : 'hidden';
+    btn.style.opacity = visible ? '1' : '0';
+  }
 
+  // ========== 事件绑定 ==========
   const numInput = document.getElementById('numInput');
   const numResult = document.getElementById('numResult');
   const numHint = document.getElementById('numHint');
@@ -875,16 +1032,10 @@
     prefixToggle.checked = localStorage.getItem(PREFIX_KEY) === 'true';
   } catch (e) {}
 
-  function setCopyVisible(btn, visible) {
-    btn.style.visibility = visible ? 'visible' : 'hidden';
-    btn.style.opacity = visible ? '1' : '0';
-  }
-
   function updateNumResult() {
     const rawVal = numInput.value;
     const val = normalizeInput(rawVal);
     const validation = validateNumberInput(val);
-
     if (!val.trim()) {
       numInput.classList.remove('error');
       numHint.textContent = '支持整数、小数，自动去除多余空格';
@@ -892,9 +1043,9 @@
       numResult.textContent = '输入金额后将自动显示大写结果';
       numResult.classList.add('empty');
       setCopyVisible(numCopy, false);
+      saveInputState();
       return;
     }
-
     if (!validation.valid) {
       numInput.classList.add('error');
       numHint.textContent = validation.msg;
@@ -902,43 +1053,48 @@
       numResult.textContent = '—';
       numResult.classList.add('empty');
       setCopyVisible(numCopy, false);
+      saveInputState();
       return;
     }
-
     numInput.classList.remove('error');
     numHint.textContent = '支持整数、小数，自动去除多余空格';
     numHint.classList.remove('error');
-
     let result = toChinese(val.trim().replace(/\s/g, ''));
     if (!result) {
       numResult.textContent = '—';
       numResult.classList.add('empty');
       setCopyVisible(numCopy, false);
+      saveInputState();
       return;
     }
     if (prefixToggle.checked) {
       result = '人民币' + result;
     }
-
     numResult.textContent = result || '—';
     numResult.classList.remove('empty');
     setCopyVisible(numCopy, true);
-
+    saveInputState();
     // 添加到历史（去抖动后）
-    clearTimeout(window._historyTimer);
-    window._historyTimer = setTimeout(() => {
+    clearTimeout(historyTimer);
+    historyTimer = setTimeout(() => {
       const cleanVal = val.trim().replace(/\s/g, '');
       if (cleanVal && result && result !== '—') {
         addToHistory(cleanVal, result, false);
       }
-    }, 800);
+    }, HISTORY_TIMER_MS);
   }
 
-  // debounce 实时转换，减少输入长金额时的视觉闪烁
+  // P2-11: 使用局部变量替代 window._historyTimer
+  let historyTimer = null;
+  // debounce 实时转换
   let numDebounceTimer = null;
+  let numComposing = false;
+
+  numInput.addEventListener('compositionstart', () => { numComposing = true; });
+  numInput.addEventListener('compositionend', () => { numComposing = false; });
   numInput.addEventListener('input', () => {
     clearTimeout(numDebounceTimer);
-    numDebounceTimer = setTimeout(updateNumResult, 150);
+    numDebounceTimer = setTimeout(updateNumResult, DEBOUNCE_MS);
   });
 
   numCopy.addEventListener('click', () => {
@@ -959,9 +1115,9 @@
       cnResult.classList.add('empty');
       setCopyVisible(cnCopy, false);
       cnHint.textContent = '';
+      saveInputState();
       return;
     }
-
     let result = toNumber(val);
     if (result && typeof result === 'object' && result.error) {
       cnResult.textContent = '无法识别';
@@ -969,31 +1125,34 @@
       setCopyVisible(cnCopy, false);
       cnHint.textContent = result.msg;
       cnHint.classList.add('error');
+      saveInputState();
       return;
     }
-
     if (result === '') {
       cnResult.textContent = '无法识别，请检查大写格式';
       cnResult.classList.add('empty');
       setCopyVisible(cnCopy, false);
       cnHint.textContent = '提示：确保使用规范大写汉字（零壹贰叁肆伍陆柒捌玖拾佰仟万亿）';
       cnHint.classList.remove('error');
+      saveInputState();
       return;
     }
-
     cnResult.textContent = result;
     cnResult.classList.remove('empty');
     setCopyVisible(cnCopy, true);
     cnHint.textContent = '';
     cnHint.classList.remove('error');
-
+    saveInputState();
     // 添加到历史
     addToHistory(val, result, true);
   });
 
-  // Enter 快捷键触发大写转小写
+  // P1-5 / P2-3: IME composition 期间 Enter 不触发转换
+  let cnComposing = false;
+  cnInput.addEventListener('compositionstart', () => { cnComposing = true; });
+  cnInput.addEventListener('compositionend', () => { cnComposing = false; });
   cnInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !cnComposing) {
       e.preventDefault();
       cnConvert.click();
     }
@@ -1010,6 +1169,7 @@
     cnResult.classList.add('empty');
     setCopyVisible(cnCopy, false);
     cnHint.textContent = '';
+    saveInputState();
     cnInput.focus();
   });
 
@@ -1028,20 +1188,27 @@
 
   // 键盘快捷键
   document.addEventListener('keydown', (e) => {
-    // Ctrl+Enter 触发小写转大写（当数字输入框聚焦时）
     if (e.key === 'Enter' && e.ctrlKey && document.activeElement === numInput) {
       e.preventDefault();
-      // 数字框是实时转换，Enter 只是复制结果
       if (!numResult.classList.contains('empty')) {
         numCopy.click();
       }
     }
   });
 
+  // P2-4: 页面卸载前清理 timer
+  window.addEventListener('beforeunload', () => {
+    clearTimeout(numDebounceTimer);
+    clearTimeout(historyTimer);
+  });
+
+  // P2-5: 刷新后恢复输入状态
+  restoreInputState();
+
   // 初始化
   renderHistory();
-
 })();
 </script>
+
 </body>
 </html>
