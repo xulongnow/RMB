@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; connect-src 'none';">
 <title>人民币大写转换工具</title>
 <style>
   :root {
@@ -452,6 +452,8 @@
   function toChinese(numStr) {
     numStr = numStr.trim();
     if (!numStr) return '';
+    // P1-2: 入口统一归一化全角/逗号输入
+    numStr = normalizeInput(numStr);
     // 必须包含至少一个数字
     if (!/\d/.test(numStr)) return '';
     // P0-2: 先检查整数部分是否超出安全精度范围
@@ -490,7 +492,8 @@
     // 小数部分转换
     let decResult = decimalToChinese(decimal, intResult !== '');
     if (intResult === '') {
-      if (decimal === '00') return '零元整';
+      // P2-1: 负数零金额保留负号前缀
+      if (decimal === '00') return (neg ? '负' : '') + '零元整';
       // P1-4: 负数小数金额保留"负"前缀
       return (neg ? '负' : '') + decResult;
     }
@@ -615,7 +618,7 @@
     chinese = chinese.trim();
     if (!chinese) return '';
     // 输入合法性校验：所有字符必须在允许集合中
-    let cleanForCheck = chinese.replace(/^人民币/, '').replace(/[整正]$/, '');
+    let cleanForCheck = chinese.replace(/^人民币/, '').replace(/[整正]+$/, '');
     if (cleanForCheck[0] === '负') cleanForCheck = cleanForCheck.slice(1);
     for (let char of cleanForCheck) {
       if (!ALLOWED_CN_CHARS.has(char)) {
@@ -625,7 +628,11 @@
     // 去除人民币前缀
     chinese = chinese.replace(/^人民币/, '');
     // 去除整/正后缀
-    chinese = chinese.replace(/[整正]$/, '');
+    chinese = chinese.replace(/[整正]+$/, '');
+    // P1-5: 负号只能出现在开头
+    if (chinese.slice(1).includes('负')) {
+      return { error: true, msg: '负号只能出现在大写金额的开头' };
+    }
     // 去除负号处理
     let neg = false;
     if (chinese[0] === '负') { neg = true; chinese = chinese.slice(1); }
@@ -645,9 +652,9 @@
     if (!hasDigit) {
       return { error: true, msg: '请输入有效的大写金额' };
     }
-    // P1-7: 检查「零拾」等畸形结构
-    if (/零拾/.test(chinese)) {
-      return { error: true, msg: '大写金额格式错误：「零拾」不是规范写法' };
+    // P1-7 / P2-2: 检查「零拾」「零佰」「零仟」等畸形结构
+    if (/零[拾佰仟]/.test(chinese)) {
+      return { error: true, msg: '大写金额格式错误：「零」后不能直接跟数位单位' };
     }
     // 路由：根据单位决定整数部分与小数部分
     let yuanIndex = chinese.indexOf('元');
@@ -673,6 +680,7 @@
       }
     }
     let integer = integerPart ? chineseToNumber(integerPart) : 0;
+    if (integer && typeof integer === 'object' && integer.error) return integer;
     let decimal = 0;
     if (decimalPart) {
       let decResult = parseDecimal(decimalPart);
@@ -703,6 +711,7 @@
     let total = 0;
     let current = 0;
     let lastDigit = 0;
+    let lastBigUnit = 0;
     for (let char of chinese) {
       if (DIGIT_MAP[char] !== undefined) {
         lastDigit = DIGIT_MAP[char];
@@ -715,6 +724,14 @@
           // 2. 若已有 total 且 current > 0：如「壹亿零壹万」，total = total + current * unit
           // 3. 若 total 为 0：如「壹万」，total = current * unit
           if (total > 0 && current === 0) {
+            // P1-3: 拒绝畸形连续大单位（如「壹亿万」「壹亿零万」）
+            if (lastDigit === 0) {
+              return { error: true, msg: '大写金额格式错误：大单位前无有效数字' };
+            }
+            // 拒绝降序大单位链（如「壹亿万」中 万 < 亿）
+            if (lastBigUnit > 0 && unit < lastBigUnit) {
+              return { error: true, msg: '大写金额格式错误：大单位顺序错误' };
+            }
             total = total * unit;
           } else if (total > 0) {
             total = total + current * unit;
@@ -722,6 +739,7 @@
             total = current * unit;
           }
           current = 0;
+          lastBigUnit = unit;
         } else {
           // 小单位（拾、佰、仟）：current = current - lastDigit + lastDigit * unit
           current = current - lastDigit + lastDigit * unit;
@@ -743,6 +761,10 @@
     let expectDigit = true;
     for (let char of decimalChinese) {
       if (DIGIT_MAP[char] !== undefined) {
+        // P2-7: 拒绝连续零（如「零零分」）
+        if (!expectDigit && DIGIT_MAP[char] === 0 && lastDigit === 0) {
+          return { error: true, msg: '小数部分格式错误：重复零未分隔' };
+        }
         lastDigit = DIGIT_MAP[char];
         expectDigit = false;
       } else if (char === '角') {
@@ -765,6 +787,10 @@
         // P1-9: 未识别字符报错
         return { error: true, msg: '小数部分包含无法识别的字符：「' + char + '」' };
       }
+    }
+    // P2-7: 末尾数字缺少单位
+    if (!expectDigit) {
+      return { error: true, msg: '小数部分格式错误：末尾数字缺少单位' };
     }
     return (jiao * 10 + fen) / 100;
   }
@@ -798,6 +824,8 @@
     if (/\.$/.test(val)) {
       return { valid: false, msg: '金额不能以点结尾' };
     }
+    // P1-1: 前导小数点自动补零，使 .5 / -.5 通过校验
+    if (/^-?\./.test(val)) val = val.replace(/^(-?)\./, '$10.');
     // 只允许数字和小数点
     if (!/^-?\d+\.?\d*$/.test(val)) {
       return { valid: false, msg: '只能输入数字和小数点' };
@@ -829,6 +857,10 @@
         return h && typeof h === 'object' &&
           typeof h.num === 'string' && typeof h.cn === 'string' &&
           h.num.length < 100 && h.cn.length < 200;
+      }).map(h => {
+        // P2-6: 旧格式迁移补全 reverse 字段
+        if (h.reverse === undefined) h.reverse = false;
+        return h;
       }).slice(0, MAX_HISTORY);
     } catch (e) { return []; }
   }
@@ -841,8 +873,9 @@
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
     } catch (e) {
-      // P2-7: localStorage quota 错误处理
+      // P2-7 / P1-8: localStorage quota 错误处理
       console.warn('保存历史记录失败：', e);
+      showToast('历史记录保存失败，可能超出存储配额');
     }
   }
 
@@ -857,7 +890,8 @@
     let history = loadHistory();
     // 去重：如果最新一条相同则不添加
     if (history.length > 0 && history[0].num === num && history[0].cn === cn) return;
-    history.unshift({ num, cn, time: Date.now(), reverse: !!isReverse });
+    // P1-6: 保存 prefix 状态
+    history.unshift({ num, cn, time: Date.now(), reverse: !!isReverse, prefix: prefixToggle.checked });
     if (history.length > MAX_HISTORY) history.pop();
     saveHistory(history);
     renderHistory();
@@ -903,6 +937,15 @@
    * @param {boolean} isReverse - 是否反向转换
    */
   function restoreHistory(num, isReverse) {
+    // P2-8: 防止恢复时重复触发保存
+    isRestoring = true;
+    // P1-6: 同步 prefixToggle 状态
+    let history = loadHistory();
+    let record = history.find(h => h.num === num && h.reverse === !!isReverse);
+    if (record && record.prefix !== undefined) {
+      prefixToggle.checked = record.prefix;
+      try { localStorage.setItem(PREFIX_KEY, String(prefixToggle.checked)); } catch (e) {}
+    }
     if (isReverse) {
       document.getElementById('cnInput').value = num;
       document.getElementById('cnInput').focus();
@@ -912,6 +955,7 @@
       document.getElementById('numInput').dispatchEvent(new Event('input'));
       document.getElementById('numInput').focus();
     }
+    isRestoring = false;
   }
 
   // ========== 输入状态持久化（刷新恢复）==========
@@ -920,6 +964,7 @@
    * 保存当前输入状态到 sessionStorage
    */
   function saveInputState() {
+    if (isRestoring) return;
     try {
       sessionStorage.setItem(INPUT_STATE_KEY, JSON.stringify({
         numValue: document.getElementById('numInput').value,
@@ -927,7 +972,8 @@
         numResult: document.getElementById('numResult').textContent,
         cnResult: document.getElementById('cnResult').textContent,
         numEmpty: document.getElementById('numResult').classList.contains('empty'),
-        cnEmpty: document.getElementById('cnResult').classList.contains('empty')
+        cnEmpty: document.getElementById('cnResult').classList.contains('empty'),
+        prefix: prefixToggle.checked
       }));
     } catch (e) {}
   }
@@ -936,12 +982,20 @@
    * 从 sessionStorage 恢复输入状态
    */
   function restoreInputState() {
+    isRestoring = true;
     try {
       let raw = sessionStorage.getItem(INPUT_STATE_KEY);
       if (!raw) return;
       let state = JSON.parse(raw);
+      if (typeof state !== 'object' || state === null) return;
+      // P2-4: 数据校验
+      if (state.numValue && (typeof state.numValue !== 'string' || state.numValue.length > MAX_INPUT_LEN)) return;
+      if (state.cnValue && (typeof state.cnValue !== 'string' || state.cnValue.length > MAX_CN_INPUT_LEN)) return;
+      if (state.numResult && typeof state.numResult !== 'string') return;
+      if (state.cnResult && typeof state.cnResult !== 'string') return;
+      if (typeof state.prefix !== 'boolean' && state.prefix !== undefined) return;
       if (state.numValue) {
-        document.getElementById('numInput').value = state.numValue;
+        document.getElementById('numInput').value = state.numValue.slice(0, MAX_INPUT_LEN);
         if (!state.numEmpty) {
           document.getElementById('numResult').textContent = state.numResult;
           document.getElementById('numResult').classList.remove('empty');
@@ -949,14 +1003,20 @@
         }
       }
       if (state.cnValue) {
-        document.getElementById('cnInput').value = state.cnValue;
+        document.getElementById('cnInput').value = state.cnValue.slice(0, MAX_CN_INPUT_LEN);
         if (!state.cnEmpty) {
           document.getElementById('cnResult').textContent = state.cnResult;
           document.getElementById('cnResult').classList.remove('empty');
           setCopyVisible(document.getElementById('cnCopy'), true);
         }
       }
+      // P1-7: 恢复 prefix 状态
+      if (typeof state.prefix === 'boolean') {
+        prefixToggle.checked = state.prefix;
+        try { localStorage.setItem(PREFIX_KEY, String(prefixToggle.checked)); } catch (e) {}
+      }
     } catch (e) {}
+    isRestoring = false;
   }
 
   // ========== UI 交互 ==========
@@ -1089,10 +1149,14 @@
   // debounce 实时转换
   let numDebounceTimer = null;
   let numComposing = false;
+  // P2-8: 恢复期间标志，防止重复保存
+  let isRestoring = false;
 
   numInput.addEventListener('compositionstart', () => { numComposing = true; });
   numInput.addEventListener('compositionend', () => { numComposing = false; });
   numInput.addEventListener('input', () => {
+    // P2-3: IME 组合期间跳过转换
+    if (numComposing) return;
     clearTimeout(numDebounceTimer);
     numDebounceTimer = setTimeout(updateNumResult, DEBOUNCE_MS);
   });
