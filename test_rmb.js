@@ -14,7 +14,7 @@ const ALLOWED_CN_CHARS = new Set([
   ...Object.keys(DIGIT_MAP), ...Object.keys(UNIT_MAP),
   '元','角','分','整','正','人民币','负'
 ]);
-const FULLWIDTH_MAP = {'０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','，':','};
+const FULLWIDTH_MAP = {'０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','，':',','－':'-'};
 const MAX_SAFE_DIGITS = 15;
 
 function toChinese(numStr) {
@@ -22,6 +22,11 @@ function toChinese(numStr) {
   if (!numStr) return '';
   numStr = normalizeInput(numStr);
   if (!/\d/.test(numStr)) return '';
+  // P1-8: 格式校验先于精度检查
+  let validation = validateNumberInput(numStr);
+  if (!validation.valid) {
+    return '';
+  }
   let tempStr = numStr;
   if (tempStr[0] === '-') tempStr = tempStr.slice(1);
   tempStr = tempStr.replace(/^0+/, '') || '0';
@@ -29,10 +34,6 @@ function toChinese(numStr) {
   let [integer] = tempStr.split('.');
   if (integer.length > MAX_SAFE_DIGITS) {
     return '金额过大，整数部分超出安全精度范围';
-  }
-  let validation = validateNumberInput(numStr);
-  if (!validation.valid) {
-    return '';
   }
   let neg = false;
   if (numStr[0] === '-') { neg = true; numStr = numStr.slice(1); }
@@ -50,7 +51,8 @@ function toChinese(numStr) {
   let intResult = integerPart === '0' ? '' : integerToChinese(integerPart);
   let decResult = decimalToChinese(decimal, intResult !== '');
   if (intResult === '') {
-    if (decimal === '00') return (neg ? '负' : '') + '零元整';
+    // P2-7: 零金额不保留负号
+    if (decimal === '00') return '零元整';
     return (neg ? '负' : '') + decResult;
   }
   let result = intResult + '元' + decResult;
@@ -141,16 +143,16 @@ function decimalToChinese(decimal, hasYuan) {
 }
 
 function toNumber(chinese) {
-  chinese = chinese.trim();
+  chinese = chinese.replace(/\s/g, '');
   if (!chinese) return '';
-  let cleanForCheck = chinese.replace(/^人民币/, '').replace(/[整正]+$/, '');
+  let cleanForCheck = chinese.replace(/^(人民币)+/, '').replace(/[整正]+$/, '');
   if (cleanForCheck[0] === '负') cleanForCheck = cleanForCheck.slice(1);
   for (let char of cleanForCheck) {
     if (!ALLOWED_CN_CHARS.has(char)) {
       return { error: true, msg: '包含无法识别的字符：「' + char + '」' };
     }
   }
-  chinese = chinese.replace(/^人民币/, '');
+  chinese = chinese.replace(/^(人民币)+/, '');
   chinese = chinese.replace(/[整正]+$/, '');
   if (chinese.slice(1).includes('负')) {
     return { error: true, msg: '负号只能出现在大写金额的开头' };
@@ -160,7 +162,8 @@ function toNumber(chinese) {
   if (!chinese) {
     return { error: true, msg: '请输入有效的大写金额' };
   }
-  if (chinese[0] === '拾') {
+  const SHORTHAND_PREFIXES = new Set(['拾','佰','仟','万','亿']);
+  if (SHORTHAND_PREFIXES.has(chinese[0])) {
     chinese = '壹' + chinese;
   }
   let hasDigit = false;
@@ -201,6 +204,10 @@ function toNumber(chinese) {
     decimal = decResult;
   }
   let total = integer + decimal;
+  let maxSafe = Math.pow(10, MAX_SAFE_DIGITS);
+  if (total >= maxSafe) {
+    return { error: true, msg: '金额过大，超出支持范围' };
+  }
   let hasFen = chinese.includes('分');
   let hasJiao = chinese.includes('角');
   if (total === Math.floor(total)) {
@@ -217,11 +224,28 @@ function chineseToNumber(chinese) {
   let current = 0;
   let lastDigit = 0;
   let lastBigUnit = 0;
+  let lastWasNonZeroDigit = false;
+  let lastWasZero = false;
+  let prevWasDigit = false;
+  let lastSmallUnitLevel = Infinity;
+  const UNIT_LEVEL = {仟:3, 佰:2, 拾:1};
   for (let char of chinese) {
     if (DIGIT_MAP[char] !== undefined) {
-      lastDigit = DIGIT_MAP[char];
+      let d = DIGIT_MAP[char];
+      if (lastWasNonZeroDigit) {
+        return { error: true, msg: '大写金额格式错误：连续数字之间缺少单位' };
+      }
+      if (lastWasZero && d === 0) {
+        return { error: true, msg: '大写金额格式错误：连续零未分隔' };
+      }
+      lastDigit = d;
       current += lastDigit;
+      prevWasDigit = true;
+      lastWasNonZeroDigit = (d !== 0);
+      lastWasZero = (d === 0);
     } else if (UNIT_MAP[char] !== undefined) {
+      lastWasNonZeroDigit = false;
+      lastWasZero = false;
       let unit = UNIT_MAP[char];
       if (unit >= 10000) {
         if (total > 0 && current === 0) {
@@ -239,8 +263,19 @@ function chineseToNumber(chinese) {
         }
         current = 0;
         lastBigUnit = unit;
+        prevWasDigit = false;
+        lastSmallUnitLevel = Infinity;
       } else {
+        if (!prevWasDigit) {
+          return { error: true, msg: '大写金额格式错误：单位「' + char + '」前缺少数字' };
+        }
+        let level = UNIT_LEVEL[char];
+        if (level !== undefined && level >= lastSmallUnitLevel) {
+          return { error: true, msg: '大写金额格式错误：小单位「' + char + '」顺序错误或重复' };
+        }
+        if (level !== undefined) lastSmallUnitLevel = level;
         current = current - lastDigit + lastDigit * unit;
+        prevWasDigit = false;
       }
     }
   }
@@ -262,6 +297,7 @@ function parseDecimal(decimalChinese) {
     } else if (char === '角') {
       if (hasJiao) return { error: true, msg: '「角」重复出现' };
       if (expectDigit) return { error: true, msg: '「角」前缺少数字' };
+      if (lastDigit === 0) return { error: true, msg: '「零角」为冗余写法，请直接省略或使用规范格式' };
       jiao = lastDigit;
       lastDigit = 0;
       hasJiao = true;
@@ -269,6 +305,7 @@ function parseDecimal(decimalChinese) {
     } else if (char === '分') {
       if (hasFen) return { error: true, msg: '「分」重复出现' };
       if (expectDigit) return { error: true, msg: '「分」前缺少数字' };
+      if (lastDigit === 0) return { error: true, msg: '「零分」为冗余写法，请直接省略或使用规范格式' };
       fen = lastDigit;
       lastDigit = 0;
       hasFen = true;
@@ -278,6 +315,9 @@ function parseDecimal(decimalChinese) {
     }
   }
   if (!expectDigit) {
+    if (lastDigit === 0) {
+      return { error: true, msg: '「零」后需要跟单位（角/分），例如「壹元零壹分」' };
+    }
     return { error: true, msg: '小数部分格式错误：末尾数字缺少单位' };
   }
   return (jiao * 10 + fen) / 100;
@@ -290,6 +330,10 @@ function normalizeInput(val) {
   }
   result = result.replace(/,/g, '');
   return result;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"'`\u2028\u2029]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','`':'&#96;','\u2028':'&#8232;','\u2029':'&#8233;'}[m]));
 }
 
 function validateNumberInput(val) {
@@ -509,10 +553,10 @@ assertEqual(toChinese('１，０００'), '壹仟元整', 'P1-2: 全角逗号');
 assertEqual(toChinese('1,000,000'), '壹佰万元整', 'P1-2: 千分位逗号');
 assertEqual(toChinese('１，０００，０００'), '壹佰万元整', 'P1-2: 全角+逗号混合');
 
-// ========== P2-1: 负数零金额 ==========
-assertEqual(toChinese('-0'), '负零元整', 'P2-1: -0');
-assertEqual(toChinese('-0.00'), '负零元整', 'P2-1: -0.00');
-assertEqual(toChinese('-0.01'), '负壹分', 'P2-1: -0.01');
+// ========== P2-7: 负数零金额语义（已修复：-0 归零） ==========
+assertEqual(toChinese('-0'), '零元整', 'P2-7: -0');
+assertEqual(toChinese('-0.00'), '零元整', 'P2-7: -0.00');
+assertEqual(toChinese('-0.01'), '负壹分', 'P2-7: -0.01保留负号');
 
 // ========== toNumber 反向转换测试 ==========
 assertEqual(toNumber('壹元整'), '1', '壹元整');
@@ -597,6 +641,69 @@ assertEqual(toNumber('负壹万亿元零壹分'), '-1000000000000.01', '负壹�
 assertEqual(toNumber('负壹拾万亿元零壹分'), '-10000000000000.01', '负壹拾万亿元零壹分');
 assertEqual(toNumber('负壹佰万亿元整'), '-100000000000000', '负壹佰万亿元整');
 assertEqual(toNumber('人民币壹元整'), '1', '人民币壹元整');
+
+// ========== P0-1: 连续无单位数字 ==========
+assertError(toNumber('壹壹元整'), 'P0-1: 壹壹元整');
+assertError(toNumber('叁肆伍元整'), 'P0-1: 叁肆伍元整');
+
+// ========== P0-2: 连续小单位 ==========
+assertError(toNumber('贰拾壹拾元整'), 'P0-2: 贰拾壹拾元整');
+assertError(toNumber('壹佰拾元整'), 'P0-2: 壹佰拾元整');
+assertError(toNumber('壹仟佰元整'), 'P0-2: 壹仟佰元整');
+
+// ========== P0-3: 超大金额上限校验 ==========
+assertError(toNumber('壹亿亿元整'), 'P0-3: 壹亿亿元整');
+assertError(toNumber('壹佰万亿元整壹元'), 'P0-3: 超过15位');
+
+// ========== P1-1: 中间空白字符 ==========
+assertEqual(toNumber('壹 元整'), '1', 'P1-1: 壹 元整');
+assertEqual(toNumber('壹 拾 元 整'), '10', 'P1-1: 多空格');
+
+// ========== P1-2: 全角负号 ==========
+assertEqual(toChinese('－10'), '负壹拾元整', 'P1-2: 全角负号');
+assertEqual(toChinese('－0.01'), '负壹分', 'P1-2: 全角负号小数');
+
+// ========== P1-3: 双重人民币前缀 ==========
+assertEqual(toNumber('人民币人民币壹元整'), '1', 'P1-3: 双重人民币前缀');
+assertEqual(toNumber('人民币人民币人民币壹元整'), '1', 'P1-3: 三重人民币前缀');
+
+// ========== P1-4: 元后孤零友好提示 ==========
+(function() {
+  let r = toNumber('壹佰元零');
+  assertTrue(r && r.error && r.msg.includes('零') && r.msg.includes('角'), 'P1-4: 壹佰元零提示友好');
+})();
+
+// ========== P1-5: 简写支持 ==========
+assertEqual(toNumber('佰元整'), '100', 'P1-5: 佰元整');
+assertEqual(toNumber('仟元整'), '1000', 'P1-5: 仟元整');
+assertEqual(toNumber('万元整'), '10000', 'P1-5: 万元整');
+assertEqual(toNumber('亿元整'), '100000000', 'P1-5: 亿元整');
+
+// ========== P1-6: 多个连续零无单位分隔 ==========
+assertError(toNumber('壹仟零零零零元整'), 'P1-6: 壹仟零零零零元整');
+
+// ========== P1-7: 中间连续零 ==========
+assertError(toNumber('壹仟零零壹元整'), 'P1-7: 壹仟零零壹元整');
+assertError(toNumber('壹佰零零壹元整'), 'P1-7: 壹佰零零壹元整');
+
+// ========== P1-8: 精度检查先于格式校验 ==========
+assertEqual(toChinese('<script>alert(1)</script>'), '', 'P1-8: 畸形输入返回空');
+assertEqual(toChinese('abc'), '', 'P1-8: 纯字母返回空');
+
+// ========== P2-1 & P2-4: escapeHtml 完备性 ==========
+assertEqual(escapeHtml('a\u2028b'), 'a&#8232;b', 'P2-1: Unicode行终止符');
+assertEqual(escapeHtml('a\u2029b'), 'a&#8233;b', 'P2-1: Unicode段终止符');
+assertEqual(escapeHtml('`test`'), '&#96;test&#96;', 'P2-4: 反引号');
+
+// ========== P2-6: 零角零分冗余写法 ==========
+assertError(toNumber('壹元零角'), 'P2-6: 壹元零角');
+assertError(toNumber('壹元零分'), 'P2-6: 壹元零分');
+assertEqual(toNumber('壹元叁分'), '1.03', 'P2-6: 壹元叁分合法');
+
+// ========== P2-7: 负数零金额语义 ==========
+assertEqual(toChinese('-0'), '零元整', 'P2-7: -0');
+assertEqual(toChinese('-0.00'), '零元整', 'P2-7: -0.00');
+assertEqual(toChinese('-0.01'), '负壹分', 'P2-7: -0.01保留负号');
 assertEqual(toNumber('壹元正'), '1', '壹元正');
 assertEqual(toNumber('壹元整正'), '1', '壹元整正（多重后缀）');
 assertEqual(toNumber('壹元正整'), '1', '壹元正整（多重后缀）');
