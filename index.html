@@ -427,7 +427,7 @@
     '元','角','分','整','正','人民币','负'
   ]);
   // 全角数字映射为半角
-  const FULLWIDTH_MAP = {'０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','，':','};
+  const FULLWIDTH_MAP = {'０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','，':',','－':'-'};
   // JS Number 安全整数上限 2^53-1 ≈ 9×10^15，最大安全位数为15位
   const MAX_SAFE_DIGITS = 15;
   // 历史记录相关常量
@@ -456,7 +456,12 @@
     numStr = normalizeInput(numStr);
     // 必须包含至少一个数字
     if (!/\d/.test(numStr)) return '';
-    // P0-2: 先检查整数部分是否超出安全精度范围
+    // P1-8: 格式校验先于精度检查，避免畸形输入返回误导提示
+    let validation = validateNumberInput(numStr);
+    if (!validation.valid) {
+      return '';
+    }
+    // P0-2: 检查整数部分是否超出安全精度范围
     let tempStr = numStr;
     if (tempStr[0] === '-') tempStr = tempStr.slice(1);
     tempStr = tempStr.replace(/^0+/, '') || '0';
@@ -464,11 +469,6 @@
     let [integer] = tempStr.split('.');
     if (integer.length > MAX_SAFE_DIGITS) {
       return '金额过大，整数部分超出安全精度范围';
-    }
-    // P1-11: 与UI一致的格式校验
-    let validation = validateNumberInput(numStr);
-    if (!validation.valid) {
-      return '';
     }
     // 处理负数
     let neg = false;
@@ -492,8 +492,8 @@
     // 小数部分转换
     let decResult = decimalToChinese(decimal, intResult !== '');
     if (intResult === '') {
-      // P2-1: 负数零金额保留负号前缀
-      if (decimal === '00') return (neg ? '负' : '') + '零元整';
+      // P2-7: 零金额不保留负号（-0 === 0）
+      if (decimal === '00') return '零元整';
       // P1-4: 负数小数金额保留"负"前缀
       return (neg ? '负' : '') + decResult;
     }
@@ -615,10 +615,10 @@
    * @returns {string|Object} 数字字符串，或包含error/msg的对象
    */
   function toNumber(chinese) {
-    chinese = chinese.trim();
+    chinese = chinese.replace(/\s/g, '');
     if (!chinese) return '';
     // 输入合法性校验：所有字符必须在允许集合中
-    let cleanForCheck = chinese.replace(/^人民币/, '').replace(/[整正]+$/, '');
+    let cleanForCheck = chinese.replace(/^(人民币)+/, '').replace(/[整正]+$/, '');
     if (cleanForCheck[0] === '负') cleanForCheck = cleanForCheck.slice(1);
     for (let char of cleanForCheck) {
       if (!ALLOWED_CN_CHARS.has(char)) {
@@ -626,7 +626,7 @@
       }
     }
     // 去除人民币前缀
-    chinese = chinese.replace(/^人民币/, '');
+    chinese = chinese.replace(/^(人民币)+/, '');
     // 去除整/正后缀
     chinese = chinese.replace(/[整正]+$/, '');
     // P1-5: 负号只能出现在开头
@@ -641,7 +641,8 @@
       return { error: true, msg: '请输入有效的大写金额' };
     }
     // P1-8: 支持「拾」作为「壹拾」的简写
-    if (chinese[0] === '拾') {
+    const SHORTHAND_PREFIXES = new Set(['拾','佰','仟','万','亿']);
+    if (SHORTHAND_PREFIXES.has(chinese[0])) {
       chinese = '壹' + chinese;
     }
     // 纯单位字符检查：至少需要一个数字字符
@@ -688,6 +689,11 @@
       decimal = decResult;
     }
     let total = integer + decimal;
+    // P0-3: 超大金额上限校验，与 toChinese 保持一致
+    let maxSafe = Math.pow(10, MAX_SAFE_DIGITS);
+    if (total >= maxSafe) {
+      return { error: true, msg: '金额过大，超出支持范围' };
+    }
     // 根据原始输入是否包含「分」决定小数位
     let hasFen = chinese.includes('分');
     let hasJiao = chinese.includes('角');
@@ -712,23 +718,40 @@
     let current = 0;
     let lastDigit = 0;
     let lastBigUnit = 0;
+    // P0-1: 拒绝连续无单位数字
+    let lastWasNonZeroDigit = false;
+    // P1-6/P1-7: 拒绝连续零
+    let lastWasZero = false;
+    // P0-2: 小单位前必须有数字，且同段内严格降序
+    let prevWasDigit = false;
+    let lastSmallUnitLevel = Infinity;
+    const UNIT_LEVEL = {仟:3, 佰:2, 拾:1};
     for (let char of chinese) {
       if (DIGIT_MAP[char] !== undefined) {
-        lastDigit = DIGIT_MAP[char];
+        let d = DIGIT_MAP[char];
+        // P0-1: 连续非零数字之间必须有单位
+        if (lastWasNonZeroDigit) {
+          return { error: true, msg: '大写金额格式错误：连续数字之间缺少单位' };
+        }
+        // P1-6/P1-7: 连续零未分隔
+        if (lastWasZero && d === 0) {
+          return { error: true, msg: '大写金额格式错误：连续零未分隔' };
+        }
+        lastDigit = d;
         current += lastDigit;
+        prevWasDigit = true;
+        lastWasNonZeroDigit = (d !== 0);
+        lastWasZero = (d === 0);
       } else if (UNIT_MAP[char] !== undefined) {
+        lastWasNonZeroDigit = false;
+        lastWasZero = false;
         let unit = UNIT_MAP[char];
         if (unit >= 10000) {
-          // 大单位（万、亿）处理：
-          // 1. 若已有 total 且 current 为 0：如「万亿」，total = total * unit
-          // 2. 若已有 total 且 current > 0：如「壹亿零壹万」，total = total + current * unit
-          // 3. 若 total 为 0：如「壹万」，total = current * unit
+          // 大单位（万、亿）处理
           if (total > 0 && current === 0) {
-            // P1-3: 拒绝畸形连续大单位（如「壹亿万」「壹亿零万」）
             if (lastDigit === 0) {
               return { error: true, msg: '大写金额格式错误：大单位前无有效数字' };
             }
-            // 拒绝降序大单位链（如「壹亿万」中 万 < 亿）
             if (lastBigUnit > 0 && unit < lastBigUnit) {
               return { error: true, msg: '大写金额格式错误：大单位顺序错误' };
             }
@@ -740,9 +763,21 @@
           }
           current = 0;
           lastBigUnit = unit;
+          prevWasDigit = false;
+          lastSmallUnitLevel = Infinity;
         } else {
-          // 小单位（拾、佰、仟）：current = current - lastDigit + lastDigit * unit
+          // P0-2: 小单位前必须有数字
+          if (!prevWasDigit) {
+            return { error: true, msg: '大写金额格式错误：单位「' + char + '」前缺少数字' };
+          }
+          // P0-2: 同段内小单位严格降序，禁止重复
+          let level = UNIT_LEVEL[char];
+          if (level !== undefined && level >= lastSmallUnitLevel) {
+            return { error: true, msg: '大写金额格式错误：小单位「' + char + '」顺序错误或重复' };
+          }
+          if (level !== undefined) lastSmallUnitLevel = level;
           current = current - lastDigit + lastDigit * unit;
+          prevWasDigit = false;
         }
       }
     }
@@ -771,6 +806,8 @@
         if (hasJiao) return { error: true, msg: '「角」重复出现' };
         // P1-10: 角前缺少数字时报错
         if (expectDigit) return { error: true, msg: '「角」前缺少数字' };
+        // P2-6: 拒绝「零角」冗余写法
+        if (lastDigit === 0) return { error: true, msg: '「零角」为冗余写法，请直接省略或使用规范格式' };
         jiao = lastDigit;
         lastDigit = 0;
         hasJiao = true;
@@ -779,6 +816,8 @@
         if (hasFen) return { error: true, msg: '「分」重复出现' };
         // P1-10: 分前缺少数字时报错
         if (expectDigit) return { error: true, msg: '「分」前缺少数字' };
+        // P2-6: 拒绝「零分」冗余写法
+        if (lastDigit === 0) return { error: true, msg: '「零分」为冗余写法，请直接省略或使用规范格式' };
         fen = lastDigit;
         lastDigit = 0;
         hasFen = true;
@@ -788,8 +827,11 @@
         return { error: true, msg: '小数部分包含无法识别的字符：「' + char + '」' };
       }
     }
-    // P2-7: 末尾数字缺少单位
+    // P1-4/P2-7: 末尾数字缺少单位
     if (!expectDigit) {
+      if (lastDigit === 0) {
+        return { error: true, msg: '「零」后需要跟单位（角/分），例如「壹元零壹分」' };
+      }
       return { error: true, msg: '小数部分格式错误：末尾数字缺少单位' };
     }
     return (jiao * 10 + fen) / 100;
@@ -939,23 +981,26 @@
   function restoreHistory(num, isReverse) {
     // P2-8: 防止恢复时重复触发保存
     isRestoring = true;
-    // P1-6: 同步 prefixToggle 状态
-    let history = loadHistory();
-    let record = history.find(h => h.num === num && h.reverse === !!isReverse);
-    if (record && record.prefix !== undefined) {
-      prefixToggle.checked = record.prefix;
-      try { localStorage.setItem(PREFIX_KEY, String(prefixToggle.checked)); } catch (e) {}
+    try {
+      // P1-6: 同步 prefixToggle 状态
+      let history = loadHistory();
+      let record = history.find(h => h.num === num && h.reverse === !!isReverse);
+      if (record && record.prefix !== undefined) {
+        prefixToggle.checked = record.prefix;
+        try { localStorage.setItem(PREFIX_KEY, String(prefixToggle.checked)); } catch (e) {}
+      }
+      if (isReverse) {
+        document.getElementById('cnInput').value = num;
+        document.getElementById('cnInput').focus();
+        document.getElementById('cnConvert').click();
+      } else {
+        document.getElementById('numInput').value = num;
+        document.getElementById('numInput').dispatchEvent(new Event('input'));
+        document.getElementById('numInput').focus();
+      }
+    } finally {
+      isRestoring = false;
     }
-    if (isReverse) {
-      document.getElementById('cnInput').value = num;
-      document.getElementById('cnInput').focus();
-      document.getElementById('cnConvert').click();
-    } else {
-      document.getElementById('numInput').value = num;
-      document.getElementById('numInput').dispatchEvent(new Event('input'));
-      document.getElementById('numInput').focus();
-    }
-    isRestoring = false;
   }
 
   // ========== 输入状态持久化（刷新恢复）==========
@@ -994,6 +1039,11 @@
       if (state.numResult && typeof state.numResult !== 'string') return;
       if (state.cnResult && typeof state.cnResult !== 'string') return;
       if (typeof state.prefix !== 'boolean' && state.prefix !== undefined) return;
+      // P2-2: 内容白名单校验，防止 storage 篡改注入非预期内容
+      if (state.numValue && /[<>"'`]|javascript:/i.test(state.numValue)) return;
+      if (state.cnValue && /[<>"'`]|javascript:/i.test(state.cnValue)) return;
+      if (state.numResult && /[<>"'`]|javascript:/i.test(state.numResult)) return;
+      if (state.cnResult && /[<>"'`]|javascript:/i.test(state.cnResult)) return;
       if (state.numValue) {
         document.getElementById('numInput').value = state.numValue.slice(0, MAX_INPUT_LEN);
         if (!state.numEmpty) {
@@ -1029,7 +1079,7 @@
   }
 
   function escapeHtml(str) {
-    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+    return String(str).replace(/[&<>"'`\u2028\u2029]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','`':'&#96;','\u2028':'&#8232;','\u2029':'&#8233;'}[m]));
   }
 
   function escapeJs(str) {
